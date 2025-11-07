@@ -1,4 +1,3 @@
-# src/model.py
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -11,8 +10,7 @@ class PositionalEncoding(nn.Module):
         
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * 
-                           (-math.log(10000.0) / d_model))
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
         
         pe[:, 0::2] = torch.sin(position * div_term)
         pe[:, 1::2] = torch.cos(position * div_term)
@@ -59,9 +57,7 @@ class MultiHeadAttention(nn.Module):
         
         # Apply attention to values
         context = torch.matmul(attn_weights, V)
-        context = context.transpose(1, 2).contiguous().view(
-            batch_size, -1, self.d_model
-        )
+        context = context.transpose(1, 2).contiguous().view(batch_size, -1, self.d_model)
         
         output = self.w_o(context)
         return output, attn_weights
@@ -78,59 +74,111 @@ class PositionwiseFFN(nn.Module):
         return self.linear2(self.dropout(self.activation(self.linear1(x))))
 
 class TransformerEncoderLayer(nn.Module):
-    def __init__(self, d_model, num_heads, d_ff, dropout=0.1):
+    def __init__(self, d_model, num_heads, d_ff, dropout=0.1, use_residual=True, use_layer_norm=True):
         super(TransformerEncoderLayer, self).__init__()
+        
+        self.use_residual = use_residual
+        self.use_layer_norm = use_layer_norm
+        
         self.self_attn = MultiHeadAttention(d_model, num_heads, dropout)
         self.ffn = PositionwiseFFN(d_model, d_ff, dropout)
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
+        
+        if self.use_layer_norm:
+            self.norm1 = nn.LayerNorm(d_model)
+            self.norm2 = nn.LayerNorm(d_model)
+            
         self.dropout = nn.Dropout(dropout)
         
     def forward(self, x, mask=None):
-        # Self-attention with residual connection and layer norm
+        # Self-attention with conditional residual and layer norm
         attn_output, attn_weights = self.self_attn(x, x, x, mask)
-        x = self.norm1(x + self.dropout(attn_output))
         
-        # FFN with residual connection and layer norm
+        if self.use_residual:
+            x = x + self.dropout(attn_output)
+        else:
+            x = self.dropout(attn_output)
+            
+        if self.use_layer_norm:
+            x = self.norm1(x)
+        
+        # FFN with conditional residual and layer norm
         ffn_output = self.ffn(x)
-        x = self.norm2(x + self.dropout(ffn_output))
+        
+        if self.use_residual:
+            x = x + self.dropout(ffn_output)
+        else:
+            x = self.dropout(ffn_output)
+            
+        if self.use_layer_norm:
+            x = self.norm2(x)
         
         return x, attn_weights
 
 class TransformerDecoderLayer(nn.Module):
-    def __init__(self, d_model, num_heads, d_ff, dropout=0.1):
+    def __init__(self, d_model, num_heads, d_ff, dropout=0.1, use_residual=True, use_layer_norm=True):
         super(TransformerDecoderLayer, self).__init__()
+        
+        self.use_residual = use_residual
+        self.use_layer_norm = use_layer_norm
+        
         self.self_attn = MultiHeadAttention(d_model, num_heads, dropout)
         self.cross_attn = MultiHeadAttention(d_model, num_heads, dropout)
         self.ffn = PositionwiseFFN(d_model, d_ff, dropout)
-        self.norm1 = nn.LayerNorm(d_model)
-        self.norm2 = nn.LayerNorm(d_model)
-        self.norm3 = nn.LayerNorm(d_model)
+        
+        if self.use_layer_norm:
+            self.norm1 = nn.LayerNorm(d_model)
+            self.norm2 = nn.LayerNorm(d_model)
+            self.norm3 = nn.LayerNorm(d_model)
+            
         self.dropout = nn.Dropout(dropout)
         
     def forward(self, x, encoder_output, src_mask=None, tgt_mask=None):
-        # Self-attention (with future masking)
+        # Self-attention
         self_attn_output, self_attn_weights = self.self_attn(x, x, x, tgt_mask)
-        x = self.norm1(x + self.dropout(self_attn_output))
         
-        # Cross-attention with encoder output
-        cross_attn_output, cross_attn_weights = self.cross_attn(
-            x, encoder_output, encoder_output, src_mask
-        )
-        x = self.norm2(x + self.dropout(cross_attn_output))
+        if self.use_residual:
+            x = x + self.dropout(self_attn_output)
+        else:
+            x = self.dropout(self_attn_output)
+            
+        if self.use_layer_norm:
+            x = self.norm1(x)
+        
+        # Cross-attention
+        cross_attn_output, cross_attn_weights = self.cross_attn(x, encoder_output, encoder_output, src_mask)
+        
+        if self.use_residual:
+            x = x + self.dropout(cross_attn_output)
+        else:
+            x = self.dropout(cross_attn_output)
+            
+        if self.use_layer_norm:
+            x = self.norm2(x)
         
         # FFN
         ffn_output = self.ffn(x)
-        x = self.norm3(x + self.dropout(ffn_output))
+        
+        if self.use_residual:
+            x = x + self.dropout(ffn_output)
+        else:
+            x = self.dropout(ffn_output)
+            
+        if self.use_layer_norm:
+            x = self.norm3(x)
         
         return x, self_attn_weights, cross_attn_weights
 
 class TransformerEncoder(nn.Module):
     def __init__(self, vocab_size, d_model, num_heads, d_ff, num_layers, 
-                 max_seq_length, dropout=0.1):
+                 max_seq_length, dropout=0.1, use_positional_encoding=True):
         super(TransformerEncoder, self).__init__()
+        
+        self.use_positional_encoding = use_positional_encoding
         self.token_embedding = nn.Embedding(vocab_size, d_model)
-        self.pos_encoding = PositionalEncoding(d_model, max_seq_length)
+        
+        if self.use_positional_encoding:
+            self.pos_encoding = PositionalEncoding(d_model, max_seq_length)
+            
         self.layers = nn.ModuleList([
             TransformerEncoderLayer(d_model, num_heads, d_ff, dropout)
             for _ in range(num_layers)
@@ -138,9 +186,11 @@ class TransformerEncoder(nn.Module):
         self.dropout = nn.Dropout(dropout)
         
     def forward(self, x, mask=None):
-        # Embedding + positional encoding
         x = self.token_embedding(x)
-        x = self.pos_encoding(x)
+        
+        if self.use_positional_encoding:
+            x = self.pos_encoding(x)
+            
         x = self.dropout(x)
         
         all_attn_weights = []
@@ -152,29 +202,35 @@ class TransformerEncoder(nn.Module):
 
 class TransformerDecoder(nn.Module):
     def __init__(self, vocab_size, d_model, num_heads, d_ff, num_layers,
-                 max_seq_length, dropout=0.1):
+                 max_seq_length, dropout=0.1, use_positional_encoding=True,
+                 use_residual=True, use_layer_norm=True):
         super(TransformerDecoder, self).__init__()
+        
+        self.use_positional_encoding = use_positional_encoding
         self.token_embedding = nn.Embedding(vocab_size, d_model)
-        self.pos_encoding = PositionalEncoding(d_model, max_seq_length)
+        
+        if self.use_positional_encoding:
+            self.pos_encoding = PositionalEncoding(d_model, max_seq_length)
+            
         self.layers = nn.ModuleList([
-            TransformerDecoderLayer(d_model, num_heads, d_ff, dropout)
+            TransformerDecoderLayer(d_model, num_heads, d_ff, dropout, use_residual, use_layer_norm)
             for _ in range(num_layers)
         ])
         self.dropout = nn.Dropout(dropout)
         
     def forward(self, x, encoder_output, src_mask=None, tgt_mask=None):
-        # Embedding + positional encoding
         x = self.token_embedding(x)
-        x = self.pos_encoding(x)
+        
+        if self.use_positional_encoding:
+            x = self.pos_encoding(x)
+            
         x = self.dropout(x)
         
         all_self_attn_weights = []
         all_cross_attn_weights = []
         
         for layer in self.layers:
-            x, self_attn_weights, cross_attn_weights = layer(
-                x, encoder_output, src_mask, tgt_mask
-            )
+            x, self_attn_weights, cross_attn_weights = layer(x, encoder_output, src_mask, tgt_mask)
             all_self_attn_weights.append(self_attn_weights)
             all_cross_attn_weights.append(cross_attn_weights)
             
@@ -182,13 +238,16 @@ class TransformerDecoder(nn.Module):
 
 class Transformer(nn.Module):
     def __init__(self, src_vocab_size, tgt_vocab_size, d_model, num_heads, 
-                 d_ff, num_layers, max_seq_length, dropout=0.1):
+                 d_ff, num_layers, max_seq_length, dropout=0.1,
+                 use_positional_encoding=True, use_residual=True, use_layer_norm=True):
         super(Transformer, self).__init__()
         self.encoder = TransformerEncoder(
-            src_vocab_size, d_model, num_heads, d_ff, num_layers, max_seq_length, dropout
+            src_vocab_size, d_model, num_heads, d_ff, num_layers, max_seq_length, 
+            dropout, use_positional_encoding
         )
         self.decoder = TransformerDecoder(
-            tgt_vocab_size, d_model, num_heads, d_ff, num_layers, max_seq_length, dropout
+            tgt_vocab_size, d_model, num_heads, d_ff, num_layers, max_seq_length, 
+            dropout, use_positional_encoding, use_residual, use_layer_norm
         )
         self.output_projection = nn.Linear(d_model, tgt_vocab_size)
         
@@ -199,12 +258,13 @@ class Transformer(nn.Module):
         return output
 
 class TransformerLM(nn.Module):
-    """Language Model variant (only decoder)"""
     def __init__(self, vocab_size, d_model, num_heads, d_ff, num_layers,
-                 max_seq_length, dropout=0.1):
+                 max_seq_length, dropout=0.1, use_positional_encoding=True,
+                 use_residual=True, use_layer_norm=True):
         super(TransformerLM, self).__init__()
         self.decoder = TransformerDecoder(
-            vocab_size, d_model, num_heads, d_ff, num_layers, max_seq_length, dropout
+            vocab_size, d_model, num_heads, d_ff, num_layers, max_seq_length,
+            dropout, use_positional_encoding, use_residual, use_layer_norm
         )
         self.output_projection = nn.Linear(d_model, vocab_size)
         
