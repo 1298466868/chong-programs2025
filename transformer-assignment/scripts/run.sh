@@ -1,17 +1,19 @@
 #!/bin/bash
-# scripts/run.sh
+
+echo "Setting up Transformer Assignment..."
 
 # Create virtual environment
 python -m venv transformer_env
 source transformer_env/bin/activate
 
 # Install dependencies
-pip install torch matplotlib numpy pyyaml
+pip install torch matplotlib numpy pyyaml requests
 
 # Create directories
 mkdir -p data checkpoints results
 
 # Download and prepare tiny shakespeare dataset
+echo "Downloading Tiny Shakespeare dataset..."
 python -c "
 import requests
 url = 'https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt'
@@ -37,6 +39,9 @@ print(f'Dataset sizes - Train: {len(text[:train_end])}, Val: {len(text[train_end
 "
 
 # Train the model
-python src/train.py
+echo "Starting training..."
+python src/train.py --config configs/base.yaml --seed 42
+
+echo "Training completed! Check results/ directory for outputs."
 
 deactivate
