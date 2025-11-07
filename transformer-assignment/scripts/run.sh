@@ -22,6 +22,11 @@ mkdir -p data
 mkdir -p checkpoints
 mkdir -p results
 
+# ===== SSL方案1实现 =====
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
+# ===== 修复结束 =====
+
 # 下载数据集 - 添加错误处理和备用方案
 echo "下载Tiny Shakespeare数据集..."
 if command -v curl &> /dev/null; then
