@@ -10,12 +10,16 @@ import math
 from model import TransformerLM, Transformer
 from data_utils import TextDataset
 from config import Config
-# ===== CUDA方案3实现 =====
-import torch
-torch.backends.cuda.graphs = False  # 禁用CUDA图
-torch.backends.cudnn.deterministic = True  # 确定性算法
-torch.backends.cudnn.benchmark = False  # 禁用基准优化
+
+# ===== CUDA修复方案 =====
+import os
+# 禁用CUDA图和相关优化
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+print("✅ 已应用CUDA修复")
 # ===== 修复结束 =====
+
 class Trainer:
     def __init__(self, model, train_loader, val_loader, config):
         self.model = model
@@ -29,17 +33,23 @@ class Trainer:
             weight_decay=config.weight_decay
         )
         
-        if hasattr(config, 'warmup_steps'):
+        # 修复调度器逻辑
+        if hasattr(config, 'warmup_steps') and config.warmup_steps > 0:
             self.scheduler = self.get_cosine_schedule_with_warmup()
+            self.scheduler_type = 'step'  # 按step调整
         else:
             self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer, 
                 T_max=config.epochs
             )
+            self.scheduler_type = 'epoch'  # 按epoch调整
         
         self.criterion = nn.CrossEntropyLoss(ignore_index=0)
         self.device = config.device
         self.model.to(self.device)
+        
+        # 预计算掩码以提高效率
+        self._cached_masks = {}
         
         self.train_losses = []
         self.val_losses = []
@@ -51,11 +61,18 @@ class Trainer:
             if current_step < self.config.warmup_steps:
                 return float(current_step) / float(max(1, self.config.warmup_steps))
             progress = float(current_step - self.config.warmup_steps) / float(
-                max(1, self.config.epochs * len(self.train_loader) - self.config.warmup_steps)
+                max(1, self.config.total_training_steps - self.config.warmup_steps)
             )
             return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
         
         return optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda)
+    
+    def get_mask(self, seq_len):
+        """缓存掩码以提高效率"""
+        if seq_len not in self._cached_masks:
+            mask = torch.triu(torch.ones(seq_len, seq_len) * float('-inf'), diagonal=1)
+            self._cached_masks[seq_len] = mask.to(self.device)
+        return self._cached_masks[seq_len]
     
     def train_epoch(self, epoch):
         self.model.train()
@@ -66,8 +83,7 @@ class Trainer:
             data, targets = data.to(self.device), targets.to(self.device)
             
             seq_len = data.size(1)
-            mask = torch.triu(torch.ones(seq_len, seq_len) * float('-inf'), diagonal=1)
-            mask = mask.to(self.device)
+            mask = self.get_mask(seq_len)
             
             self.optimizer.zero_grad()
             
@@ -76,12 +92,13 @@ class Trainer:
             
             loss.backward()
             
-            if hasattr(self.config, 'grad_clip'):
+            if hasattr(self.config, 'grad_clip') and self.config.grad_clip > 0:
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.config.grad_clip)
             
             self.optimizer.step()
             
-            if hasattr(self.config, 'warmup_steps'):
+            # 修复：只在step类型调度器时每个batch更新
+            if self.scheduler_type == 'step':
                 self.scheduler.step()
             
             total_loss += loss.item() * data.size(0)
@@ -93,7 +110,7 @@ class Trainer:
             if batch_idx % self.config.log_interval == 0:
                 print(f'Epoch {epoch}, Batch {batch_idx}, Loss: {loss.item():.4f}, LR: {current_lr:.6f}')
                 
-        return total_loss / total_tokens
+        return total_loss / total_tokens if total_tokens > 0 else 0
     
     def validate(self):
         self.model.eval()
@@ -105,8 +122,7 @@ class Trainer:
                 data, targets = data.to(self.device), targets.to(self.device)
                 
                 seq_len = data.size(1)
-                mask = torch.triu(torch.ones(seq_len, seq_len) * float('-inf'), diagonal=1)
-                mask = mask.to(self.device)
+                mask = self.get_mask(seq_len)
                 
                 output = self.model(data, mask)
                 loss = self.criterion(output.view(-1, output.size(-1)), targets.view(-1))
@@ -114,8 +130,8 @@ class Trainer:
                 total_loss += loss.item() * data.size(0)
                 total_tokens += data.size(0)
                 
-        avg_loss = total_loss / total_tokens
-        perplexity = math.exp(avg_loss)
+        avg_loss = total_loss / total_tokens if total_tokens > 0 else float('inf')
+        perplexity = math.exp(avg_loss) if avg_loss < 20 else float('inf')  # 防止溢出
         
         return avg_loss, perplexity
     
@@ -124,13 +140,18 @@ class Trainer:
         print(f"Training on: {self.device}")
         print(f"Number of parameters: {sum(p.numel() for p in self.model.parameters()):,}")
         
+        # 计算总训练步数
+        if hasattr(self.config, 'warmup_steps') and self.config.warmup_steps > 0:
+            self.config.total_training_steps = self.config.epochs * len(self.train_loader)
+        
         for epoch in range(self.config.epochs):
             start_time = time.time()
             
             train_loss = self.train_epoch(epoch)
             val_loss, perplexity = self.validate()
             
-            if not hasattr(self.config, 'warmup_steps'):
+            # 修复：只在epoch类型调度器时每个epoch更新
+            if self.scheduler_type == 'epoch':
                 self.scheduler.step()
             
             self.train_losses.append(train_loss)
@@ -161,12 +182,13 @@ class Trainer:
             'train_losses': self.train_losses,
             'val_losses': self.val_losses,
             'perplexities': self.perplexities,
-            'config': self.config.to_dict()
+            'config': self.config.__dict__
         }
         
         os.makedirs(self.config.save_dir, exist_ok=True)
         torch.save(checkpoint, f'{self.config.save_dir}/model_epoch_{epoch+1}.pt')
-        
+        print(f"✅ Checkpoint saved: {self.config.save_dir}/model_epoch_{epoch+1}.pt")
+    
     def plot_training_curves(self):
         os.makedirs(self.config.results_dir, exist_ok=True)
         
@@ -209,8 +231,8 @@ class Trainer:
             generated = start_text
             
             for _ in range(100):
-                mask = torch.triu(torch.ones(input_seq.size(1), input_seq.size(1)) * float('-inf'), diagonal=1)
-                mask = mask.to(self.device)
+                seq_len = input_seq.size(1)
+                mask = self.get_mask(seq_len)
                 
                 output = self.model(input_seq, mask)
                 next_token_logits = output[:, -1, :]
@@ -225,7 +247,7 @@ class Trainer:
                 if input_seq.size(1) > self.config.seq_length:
                     input_seq = input_seq[:, -self.config.seq_length:]
         
-        with open(f'{self.config.results_dir}/generated_text.txt', 'w') as f:
+        with open(f'{self.config.results_dir}/generated_text.txt', 'w', encoding='utf-8') as f:
             f.write(generated)
         
         print("Generated text sample:")
@@ -248,17 +270,20 @@ def main():
     train_dataset = TextDataset(f'{config.data_dir}/train.txt', config.seq_length)
     val_dataset = TextDataset(f'{config.data_dir}/val.txt', config.seq_length)
     
+    # Windows下num_workers设为0避免问题
+    num_workers = 0 if os.name == 'nt' else config.num_workers
+    
     train_loader = DataLoader(
         train_dataset, 
         batch_size=config.batch_size, 
         shuffle=True,
-        num_workers=config.num_workers
+        num_workers=num_workers
     )
     val_loader = DataLoader(
         val_dataset, 
         batch_size=config.batch_size, 
         shuffle=False,
-        num_workers=config.num_workers
+        num_workers=num_workers
     )
     
     if config.model_type == 'lm':
