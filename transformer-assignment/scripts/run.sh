@@ -30,27 +30,41 @@ EOF
     echo "已创建示例数据"
 }
 
-# 创建SSL修复的Python脚本
-create_ssl_fix() {
-    cat > "ssl_fix.py" << 'EOF'
+# 创建改进的下载脚本
+create_download_script() {
+    cat > "download_data.py" << 'EOF'
 import ssl
-ssl._create_default_https_context = ssl._create_unverified_context
-
-# 下载数据集
 import urllib.request
 import os
 
-try:
-    print("下载Tiny Shakespeare数据集...")
-    urllib.request.urlretrieve(
-        "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt",
-        "data/tiny_shakespeare.txt"
-    )
-    print("下载成功")
-except Exception as e:
-    print(f"下载失败: {e}")
-    print("创建示例数据...")
-    # 这里可以调用create_sample_data的逻辑
+# 修复SSL证书问题
+ssl._create_default_https_context = ssl._create_unverified_context
+
+# 多个下载源
+sources = [
+    "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt",
+    "https://cdn.jsdelivr.net/gh/karpathy/char-rnn/data/tinyshakespeare/input.txt",
+]
+
+for i, url in enumerate(sources):
+    try:
+        print(f"尝试从源 {i+1} 下载: {url}")
+        urllib.request.urlretrieve(url, "data/tiny_shakespeare.txt")
+        
+        # 检查文件是否下载成功
+        if os.path.exists("data/tiny_shakespeare.txt"):
+            with open("data/tiny_shakespeare.txt", 'r', encoding='utf-8') as f:
+                content = f.read()
+                if len(content) > 1000:
+                    print("下载成功！")
+                    exit(0)
+                else:
+                    print("下载的文件太小，尝试下一个源...")
+                    os.remove("data/tiny_shakespeare.txt")
+    except Exception as e:
+        print(f"下载失败: {e}")
+
+print("所有下载源都失败，将使用示例数据")
 EOF
 }
 
@@ -67,10 +81,10 @@ mkdir -p data
 mkdir -p checkpoints
 mkdir -p results
 
-# 下载数据集 - 添加错误处理和备用方案
+# 下载数据集 - 使用改进的下载脚本
 echo "下载Tiny Shakespeare数据集..."
-create_ssl_fix
-python ssl_fix.py
+create_download_script
+python download_data.py
 
 # 如果下载失败，确保有数据文件
 if [ ! -f "data/tiny_shakespeare.txt" ]; then
@@ -114,7 +128,7 @@ except Exception as e:
 "
 
 # 清理临时文件
-rm -f ssl_fix.py
+rm -f download_data.py
 
 # 检查必要的Python文件是否存在
 echo "检查必要文件..."
