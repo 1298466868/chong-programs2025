@@ -11,13 +11,24 @@ from model import TransformerLM, Transformer
 from data_utils import TextDataset
 from config import Config
 
-# ===== CUDA修复方案 =====
+# ===== CUDA彻底修复方案 =====
 import os
-# 禁用CUDA图和相关优化
+# 完全禁用所有CUDA优化和图形功能
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+os.environ["TORCH_USE_CUDA_DSA"] = "1"
+
+# 禁用所有可能的CUDA图和相关优化
+torch.backends.cuda.enable_flash_sdp(False)
+torch.backends.cuda.enable_mem_efficient_sdp(False)
+torch.backends.cuda.enable_math_sdp(True)
+
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
-print("✅ 已应用CUDA修复")
+torch.backends.cuda.matmul.allow_tf32 = False
+torch.backends.cudnn.allow_tf32 = False
+
+print("✅ 已应用CUDA彻底修复")
 # ===== 修复结束 =====
 
 class Trainer:
@@ -26,6 +37,13 @@ class Trainer:
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.config = config
+        
+        # 检查设备可用性
+        if config.device == 'cuda' and not torch.cuda.is_available():
+            self.device = 'cpu'
+            print("⚠️ CUDA不可用，回退到CPU")
+        else:
+            self.device = config.device
         
         self.optimizer = optim.AdamW(
             model.parameters(), 
@@ -36,16 +54,15 @@ class Trainer:
         # 修复调度器逻辑
         if hasattr(config, 'warmup_steps') and config.warmup_steps > 0:
             self.scheduler = self.get_cosine_schedule_with_warmup()
-            self.scheduler_type = 'step'  # 按step调整
+            self.scheduler_type = 'step'
         else:
             self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
                 self.optimizer, 
                 T_max=config.epochs
             )
-            self.scheduler_type = 'epoch'  # 按epoch调整
+            self.scheduler_type = 'epoch'
         
         self.criterion = nn.CrossEntropyLoss(ignore_index=0)
-        self.device = config.device
         self.model.to(self.device)
         
         # 预计算掩码以提高效率
@@ -82,14 +99,30 @@ class Trainer:
         for batch_idx, (data, targets) in enumerate(self.train_loader):
             data, targets = data.to(self.device), targets.to(self.device)
             
+            # 确保数据在正确的设备上
+            if data.device != self.device:
+                data = data.to(self.device)
+            if targets.device != self.device:
+                targets = targets.to(self.device)
+            
             seq_len = data.size(1)
             mask = self.get_mask(seq_len)
             
             self.optimizer.zero_grad()
             
-            output = self.model(data, mask)
-            loss = self.criterion(output.view(-1, output.size(-1)), targets.view(-1))
+            # 使用更安全的前向传播
+            try:
+                output = self.model(data, mask)
+                loss = self.criterion(output.view(-1, output.size(-1)), targets.view(-1))
+            except RuntimeError as e:
+                print(f"前向传播错误: {e}")
+                continue
             
+            # 检查损失是否有效
+            if torch.isnan(loss) or torch.isinf(loss):
+                print(f"无效的损失值: {loss.item()}, 跳过该batch")
+                continue
+                
             loss.backward()
             
             if hasattr(self.config, 'grad_clip') and self.config.grad_clip > 0:
@@ -97,7 +130,6 @@ class Trainer:
             
             self.optimizer.step()
             
-            # 修复：只在step类型调度器时每个batch更新
             if self.scheduler_type == 'step':
                 self.scheduler.step()
             
@@ -131,7 +163,7 @@ class Trainer:
                 total_tokens += data.size(0)
                 
         avg_loss = total_loss / total_tokens if total_tokens > 0 else float('inf')
-        perplexity = math.exp(avg_loss) if avg_loss < 20 else float('inf')  # 防止溢出
+        perplexity = math.exp(avg_loss) if avg_loss < 20 else float('inf')
         
         return avg_loss, perplexity
     
@@ -150,7 +182,6 @@ class Trainer:
             train_loss = self.train_epoch(epoch)
             val_loss, perplexity = self.validate()
             
-            # 修复：只在epoch类型调度器时每个epoch更新
             if self.scheduler_type == 'epoch':
                 self.scheduler.step()
             
