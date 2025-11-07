@@ -4,7 +4,13 @@ echo "Setting up Transformer Assignment..."
 
 # Create virtual environment
 python -m venv transformer_env
-source transformer_env/bin/activate
+# 尝试Windows方式的虚拟环境激活
+if [ -f "transformer_env/Scripts/activate" ]; then
+    source transformer_env/Scripts/activate
+else
+    echo "虚拟环境不存在，使用系统Python环境"
+    echo "当前Python: $(which python)"
+fi
 
 # Install dependencies
 pip install torch matplotlib numpy pyyaml requests
