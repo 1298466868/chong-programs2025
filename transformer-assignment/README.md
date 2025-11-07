@@ -31,19 +31,19 @@ transformer-assignment/
 
 ### 运行命令
 ```bash
-# 一键运行（推荐）
+1.一键运行（推荐）
 chmod +x scripts/run.sh
 ./scripts/run.sh
 
-# 手动运行
+2.手动运行
 pip install -r requirements.txt
 python src/train.py --config configs/base.yaml
 
 ### 消融实验
-# 运行所有消融实验
+1.运行所有消融实验
 python scripts/run_ablation.py
 
-# 运行单个消融实验
+2.运行单个消融实验
 python src/train.py --num_heads 1 --epochs 30
 
 ## 模型特性
