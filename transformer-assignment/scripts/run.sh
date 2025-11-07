@@ -9,46 +9,6 @@ else
     echo "警告：这不是Windows Git Bash环境，可能仍有兼容性问题"
 fi
 
-# 使用系统Python，不创建虚拟环境（避免路径问题）
-echo "使用系统Python环境..."
-
-# 安装依赖（如果尚未安装）
-echo "检查依赖..."
-pip install torch matplotlib numpy pyyaml requests
-
-# 创建目录 - 使用mkdir -p确保兼容性
-echo "创建目录结构..."
-mkdir -p data
-mkdir -p checkpoints
-mkdir -p results
-
-# ===== SSL方案1实现 =====
-import ssl
-ssl._create_default_https_context = ssl._create_unverified_context
-# ===== 修复结束 =====
-
-# 下载数据集 - 添加错误处理和备用方案
-echo "下载Tiny Shakespeare数据集..."
-if command -v curl &> /dev/null; then
-    echo "使用curl下载..."
-    curl -L "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt" -o "data/tiny_shakespeare.txt" || {
-        echo "curl下载失败，尝试wget..."
-        wget "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt" -O "data/tiny_shakespeare.txt" || {
-            echo "下载失败，创建示例数据..."
-            create_sample_data
-        }
-    }
-elif command -v wget &> /dev/null; then
-    echo "使用wget下载..."
-    wget "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt" -O "data/tiny_shakespeare.txt" || {
-        echo "wget下载失败，创建示例数据..."
-        create_sample_data
-    }
-else
-    echo "没有找到curl或wget，创建示例数据..."
-    create_sample_data
-fi
-
 # 如果下载失败，创建示例数据的函数
 create_sample_data() {
     cat > "data/tiny_shakespeare.txt" << 'EOF'
@@ -70,9 +30,51 @@ EOF
     echo "已创建示例数据"
 }
 
-# 检查数据文件是否存在
+# 创建SSL修复的Python脚本
+create_ssl_fix() {
+    cat > "ssl_fix.py" << 'EOF'
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
+
+# 下载数据集
+import urllib.request
+import os
+
+try:
+    print("下载Tiny Shakespeare数据集...")
+    urllib.request.urlretrieve(
+        "https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinyshakespeare/input.txt",
+        "data/tiny_shakespeare.txt"
+    )
+    print("下载成功")
+except Exception as e:
+    print(f"下载失败: {e}")
+    print("创建示例数据...")
+    # 这里可以调用create_sample_data的逻辑
+EOF
+}
+
+# 使用系统Python，不创建虚拟环境（避免路径问题）
+echo "使用系统Python环境..."
+
+# 安装依赖（如果尚未安装）
+echo "检查依赖..."
+pip install torch matplotlib numpy pyyaml requests
+
+# 创建目录 - 使用mkdir -p确保兼容性
+echo "创建目录结构..."
+mkdir -p data
+mkdir -p checkpoints
+mkdir -p results
+
+# 下载数据集 - 添加错误处理和备用方案
+echo "下载Tiny Shakespeare数据集..."
+create_ssl_fix
+python ssl_fix.py
+
+# 如果下载失败，确保有数据文件
 if [ ! -f "data/tiny_shakespeare.txt" ]; then
-    echo "错误：数据文件不存在，创建基础示例数据..."
+    echo "下载失败，创建示例数据..."
     create_sample_data
 fi
 
@@ -111,6 +113,9 @@ except Exception as e:
     print('已创建基础训练数据')
 "
 
+# 清理临时文件
+rm -f ssl_fix.py
+
 # 检查必要的Python文件是否存在
 echo "检查必要文件..."
 if [ ! -f "src/train.py" ]; then
@@ -131,4 +136,3 @@ echo "开始训练..."
 python src/train.py $CONFIG_ARG --seed 42 --batch_size 16 --seq_length 64 --epochs 30
 
 echo "训练完成! 查看 results/ 目录获取结果"
-
