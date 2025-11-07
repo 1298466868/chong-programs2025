@@ -68,17 +68,15 @@ python src/train.py --num_heads 1 --epochs 30
 
 ## 模型特性
 1.核心组件
-✅ Multi-Head Self-Attention
+✅ Multi-Head Self-Attention: 缩放点积注意力机制
 
-✅ Position-wise Feed-Forward Networks
+✅ Position-wise FFN: 位置前馈网络
 
-✅ 残差连接 + Layer Normalization
+✅ 残差连接 + LayerNorm: 训练稳定性
 
-✅ 正弦位置编码
+✅ 正弦位置编码: 位置信息注入
 
-✅ 完整的消融实验支持
-
-✅ 训练稳定性技巧
+✅ 编码器-解码器架构: 完整Transformer支持
 
 2.训练特性
 ✅ 学习率调度: Cosine annealing + warmup
