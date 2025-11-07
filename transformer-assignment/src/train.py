@@ -2,15 +2,15 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader
 import numpy as np
 import matplotlib.pyplot as plt
 import os
 import time
-import yaml
-from model import TransformerLM, Transformer
-from data_utils import TextDataset, create_masks
 import math
+from model import TransformerLM, Transformer
+from data_utils import TextDataset
+from config import Config, get_preset_config
 
 class Trainer:
     def __init__(self, model, train_loader, val_loader, config):
@@ -21,24 +21,41 @@ class Trainer:
         
         self.optimizer = optim.AdamW(
             model.parameters(), 
-            lr=config['learning_rate'],
-            weight_decay=config.get('weight_decay', 0.01)
+            lr=config.learning_rate,
+            weight_decay=config.weight_decay
         )
         
-        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
-            self.optimizer, 
-            T_max=config['epochs']
-        )
+        # 学习率调度器
+        if hasattr(config, 'warmup_steps'):
+            self.scheduler = self.get_cosine_schedule_with_warmup()
+        else:
+            self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                self.optimizer, 
+                T_max=config.epochs
+            )
         
         self.criterion = nn.CrossEntropyLoss(ignore_index=0)
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = config.device
         self.model.to(self.device)
         
         self.train_losses = []
         self.val_losses = []
         self.perplexities = []
+        self.learning_rates = []
         
-    def train_epoch(self):
+    def get_cosine_schedule_with_warmup(self):
+        """带warmup的cosine学习率调度"""
+        def lr_lambda(current_step):
+            if current_step < self.config.warmup_steps:
+                return float(current_step) / float(max(1, self.config.warmup_steps))
+            progress = float(current_step - self.config.warmup_steps) / float(
+                max(1, self.config.epochs * len(self.train_loader) - self.config.warmup_steps)
+            )
+            return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
+        
+        return optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda)
+    
+    def train_epoch(self, epoch):
         self.model.train()
         total_loss = 0
         total_tokens = 0
@@ -59,15 +76,22 @@ class Trainer:
             loss.backward()
             
             # Gradient clipping
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+            if hasattr(self.config, 'grad_clip'):
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.config.grad_clip)
             
             self.optimizer.step()
+            
+            if hasattr(self.config, 'warmup_steps'):
+                self.scheduler.step()
             
             total_loss += loss.item() * data.size(0)
             total_tokens += data.size(0)
             
-            if batch_idx % 100 == 0:
-                print(f'Batch {batch_idx}, Loss: {loss.item():.4f}')
+            current_lr = self.optimizer.param_groups[0]['lr']
+            self.learning_rates.append(current_lr)
+            
+            if batch_idx % self.config.log_interval == 0:
+                print(f'Epoch {epoch}, Batch {batch_idx}, Loss: {loss.item():.4f}, LR: {current_lr:.6f}')
                 
         return total_loss / total_tokens
     
@@ -97,14 +121,17 @@ class Trainer:
     
     def train(self):
         print("Starting training...")
+        print(f"Training on: {self.device}")
+        print(f"Number of parameters: {sum(p.numel() for p in self.model.parameters()):,}")
         
-        for epoch in range(self.config['epochs']):
+        for epoch in range(self.config.epochs):
             start_time = time.time()
             
-            train_loss = self.train_epoch()
+            train_loss = self.train_epoch(epoch)
             val_loss, perplexity = self.validate()
             
-            self.scheduler.step()
+            if not hasattr(self.config, 'warmup_steps'):
+                self.scheduler.step()
             
             self.train_losses.append(train_loss)
             self.val_losses.append(val_loss)
@@ -112,36 +139,41 @@ class Trainer:
             
             epoch_time = time.time() - start_time
             
-            print(f'Epoch {epoch+1}/{self.config["epochs"]}:')
+            print(f'Epoch {epoch+1}/{self.config.epochs}:')
             print(f'  Train Loss: {train_loss:.4f}')
             print(f'  Val Loss: {val_loss:.4f}')
             print(f'  Perplexity: {perplexity:.2f}')
             print(f'  Time: {epoch_time:.2f}s')
-            print(f'  LR: {self.scheduler.get_last_lr()[0]:.6f}')
+            print('-' * 50)
             
             # Save model checkpoint
-            if (epoch + 1) % 10 == 0:
+            if (epoch + 1) % self.config.save_interval == 0:
                 self.save_checkpoint(epoch)
                 
         self.plot_training_curves()
+        self.generate_sample_text()
     
     def save_checkpoint(self, epoch):
         checkpoint = {
             'epoch': epoch,
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict() if self.scheduler else None,
             'train_losses': self.train_losses,
             'val_losses': self.val_losses,
-            'perplexities': self.perplexities
+            'perplexities': self.perplexities,
+            'config': self.config.to_dict()
         }
         
-        os.makedirs('checkpoints', exist_ok=True)
-        torch.save(checkpoint, f'checkpoints/model_epoch_{epoch+1}.pt')
+        os.makedirs(self.config.save_dir, exist_ok=True)
+        torch.save(checkpoint, f'{self.config.save_dir}/model_epoch_{epoch+1}.pt')
         
     def plot_training_curves(self):
-        plt.figure(figsize=(12, 4))
+        os.makedirs(self.config.results_dir, exist_ok=True)
         
-        plt.subplot(1, 2, 1)
+        plt.figure(figsize=(15, 5))
+        
+        plt.subplot(1, 3, 1)
         plt.plot(self.train_losses, label='Train Loss')
         plt.plot(self.val_losses, label='Val Loss')
         plt.xlabel('Epoch')
@@ -149,66 +181,115 @@ class Trainer:
         plt.legend()
         plt.title('Training and Validation Loss')
         
-        plt.subplot(1, 2, 2)
+        plt.subplot(1, 3, 2)
         plt.plot(self.perplexities)
         plt.xlabel('Epoch')
         plt.ylabel('Perplexity')
         plt.title('Validation Perplexity')
         
+        plt.subplot(1, 3, 3)
+        plt.plot(self.learning_rates)
+        plt.xlabel('Step')
+        plt.ylabel('Learning Rate')
+        plt.title('Learning Rate Schedule')
+        plt.yscale('log')
+        
         plt.tight_layout()
-        plt.savefig('results/training_curves.png', dpi=300, bbox_inches='tight')
+        plt.savefig(f'{self.config.results_dir}/training_curves.png', dpi=300, bbox_inches='tight')
         plt.close()
+    
+    def generate_sample_text(self):
+        """生成示例文本"""
+        self.model.eval()
+        dataset = self.train_loader.dataset
+        
+        # 使用起始token
+        start_text = "First Citizen:"
+        start_tokens = [dataset.char_to_idx.get(ch, 1) for ch in start_text]
+        
+        with torch.no_grad():
+            input_seq = torch.tensor(start_tokens).unsqueeze(0).to(self.device)
+            generated = start_text
+            
+            for _ in range(100):  # 生成100个字符
+                mask = torch.triu(torch.ones(input_seq.size(1), input_seq.size(1)) * float('-inf'), diagonal=1)
+                mask = mask.to(self.device)
+                
+                output = self.model(input_seq, mask)
+                next_token_logits = output[:, -1, :]
+                next_token = torch.argmax(next_token_logits, dim=-1).item()
+                
+                if next_token == 0 or len(generated) > 200:  # 停止条件
+                    break
+                    
+                generated += dataset.idx_to_char.get(next_token, '')
+                input_seq = torch.cat([input_seq, torch.tensor([[next_token]]).to(self.device)], dim=1)
+                
+                # 保持序列长度不超过配置
+                if input_seq.size(1) > self.config.seq_length:
+                    input_seq = input_seq[:, -self.config.seq_length:]
+        
+        # 保存生成的文本
+        with open(f'{self.config.results_dir}/generated_text.txt', 'w') as f:
+            f.write(generated)
+        
+        print("Generated text sample:")
+        print(generated)
 
 def main():
-    # Load config
-    with open('configs/base.yaml', 'r') as f:
-        config = yaml.safe_load(f)
+    # 加载配置
+    config = Config.from_args()
+    print(config)
     
-    # Set random seed for reproducibility
-    torch.manual_seed(config['seed'])
-    np.random.seed(config['seed'])
+    # 设置随机种子
+    torch.manual_seed(config.seed)
+    np.random.seed(config.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(config.seed)
     
-    # Create datasets and dataloaders
-    train_dataset = TextDataset('data/train.txt', config['seq_length'])
-    val_dataset = TextDataset('data/val.txt', config['seq_length'])
+    # 创建数据集
+    train_dataset = TextDataset(f'{config.data_dir}/train.txt', config.seq_length)
+    val_dataset = TextDataset(f'{config.data_dir}/val.txt', config.seq_length)
     
     train_loader = DataLoader(
         train_dataset, 
-        batch_size=config['batch_size'], 
-        shuffle=True
+        batch_size=config.batch_size, 
+        shuffle=True,
+        num_workers=config.num_workers
     )
     val_loader = DataLoader(
         val_dataset, 
-        batch_size=config['batch_size'], 
-        shuffle=False
+        batch_size=config.batch_size, 
+        shuffle=False,
+        num_workers=config.num_workers
     )
     
-    # Initialize model
-    if config['model_type'] == 'lm':
+    # 初始化模型
+    if config.model_type == 'lm':
         model = TransformerLM(
             vocab_size=train_dataset.vocab_size,
-            d_model=config['d_model'],
-            num_heads=config['num_heads'],
-            d_ff=config['d_ff'],
-            num_layers=config['num_layers'],
-            max_seq_length=config['seq_length'],
-            dropout=config.get('dropout', 0.1)
+            d_model=config.d_model,
+            num_heads=config.num_heads,
+            d_ff=config.d_ff,
+            num_layers=config.num_layers,
+            max_seq_length=config.seq_length,
+            dropout=config.dropout
         )
     else:
         model = Transformer(
             src_vocab_size=train_dataset.vocab_size,
             tgt_vocab_size=train_dataset.vocab_size,
-            d_model=config['d_model'],
-            num_heads=config['num_heads'],
-            d_ff=config['d_ff'],
-            num_layers=config['num_layers'],
-            max_seq_length=config['seq_length'],
-            dropout=config.get('dropout', 0.1)
+            d_model=config.d_model,
+            num_heads=config.num_heads,
+            d_ff=config.d_ff,
+            num_layers=config.num_layers,
+            max_seq_length=config.seq_length,
+            dropout=config.dropout
         )
     
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
     
-    # Create trainer and start training
+    # 训练
     trainer = Trainer(model, train_loader, val_loader, config)
     trainer.train()
 
