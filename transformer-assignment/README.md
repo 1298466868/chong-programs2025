@@ -38,6 +38,8 @@ chmod +x scripts/run.sh
 2.手动运行
 pip install -r requirements.txt
 python src/train.py --config configs/base.yaml
+```
+
 
 ### 消融实验
 1.运行所有消融实验
