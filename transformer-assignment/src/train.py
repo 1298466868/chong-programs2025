@@ -10,7 +10,12 @@ import math
 from model import TransformerLM, Transformer
 from data_utils import TextDataset
 from config import Config
-
+# ===== CUDA方案3实现 =====
+import torch
+torch.backends.cuda.graphs = False  # 禁用CUDA图
+torch.backends.cudnn.deterministic = True  # 确定性算法
+torch.backends.cudnn.benchmark = False  # 禁用基准优化
+# ===== 修复结束 =====
 class Trainer:
     def __init__(self, model, train_loader, val_loader, config):
         self.model = model
