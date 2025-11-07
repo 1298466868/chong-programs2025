@@ -1,4 +1,3 @@
-# src/train.py
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -10,7 +9,7 @@ import time
 import math
 from model import TransformerLM, Transformer
 from data_utils import TextDataset
-from config import Config, get_preset_config
+from config import Config
 
 class Trainer:
     def __init__(self, model, train_loader, val_loader, config):
@@ -25,7 +24,6 @@ class Trainer:
             weight_decay=config.weight_decay
         )
         
-        # 学习率调度器
         if hasattr(config, 'warmup_steps'):
             self.scheduler = self.get_cosine_schedule_with_warmup()
         else:
@@ -44,7 +42,6 @@ class Trainer:
         self.learning_rates = []
         
     def get_cosine_schedule_with_warmup(self):
-        """带warmup的cosine学习率调度"""
         def lr_lambda(current_step):
             if current_step < self.config.warmup_steps:
                 return float(current_step) / float(max(1, self.config.warmup_steps))
@@ -63,7 +60,6 @@ class Trainer:
         for batch_idx, (data, targets) in enumerate(self.train_loader):
             data, targets = data.to(self.device), targets.to(self.device)
             
-            # Create mask for language modeling
             seq_len = data.size(1)
             mask = torch.triu(torch.ones(seq_len, seq_len) * float('-inf'), diagonal=1)
             mask = mask.to(self.device)
@@ -75,7 +71,6 @@ class Trainer:
             
             loss.backward()
             
-            # Gradient clipping
             if hasattr(self.config, 'grad_clip'):
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=self.config.grad_clip)
             
@@ -146,7 +141,6 @@ class Trainer:
             print(f'  Time: {epoch_time:.2f}s')
             print('-' * 50)
             
-            # Save model checkpoint
             if (epoch + 1) % self.config.save_interval == 0:
                 self.save_checkpoint(epoch)
                 
@@ -199,11 +193,9 @@ class Trainer:
         plt.close()
     
     def generate_sample_text(self):
-        """生成示例文本"""
         self.model.eval()
         dataset = self.train_loader.dataset
         
-        # 使用起始token
         start_text = "First Citizen:"
         start_tokens = [dataset.char_to_idx.get(ch, 1) for ch in start_text]
         
@@ -211,7 +203,7 @@ class Trainer:
             input_seq = torch.tensor(start_tokens).unsqueeze(0).to(self.device)
             generated = start_text
             
-            for _ in range(100):  # 生成100个字符
+            for _ in range(100):
                 mask = torch.triu(torch.ones(input_seq.size(1), input_seq.size(1)) * float('-inf'), diagonal=1)
                 mask = mask.to(self.device)
                 
@@ -219,17 +211,15 @@ class Trainer:
                 next_token_logits = output[:, -1, :]
                 next_token = torch.argmax(next_token_logits, dim=-1).item()
                 
-                if next_token == 0 or len(generated) > 200:  # 停止条件
+                if next_token == 0 or len(generated) > 200:
                     break
                     
                 generated += dataset.idx_to_char.get(next_token, '')
                 input_seq = torch.cat([input_seq, torch.tensor([[next_token]]).to(self.device)], dim=1)
                 
-                # 保持序列长度不超过配置
                 if input_seq.size(1) > self.config.seq_length:
                     input_seq = input_seq[:, -self.config.seq_length:]
         
-        # 保存生成的文本
         with open(f'{self.config.results_dir}/generated_text.txt', 'w') as f:
             f.write(generated)
         
@@ -237,17 +227,19 @@ class Trainer:
         print(generated)
 
 def main():
-    # 加载配置
+    # 确保所有必要目录存在
+    os.makedirs('data', exist_ok=True)
+    os.makedirs('checkpoints', exist_ok=True)
+    os.makedirs('results', exist_ok=True)
+    
     config = Config.from_args()
     print(config)
     
-    # 设置随机种子
     torch.manual_seed(config.seed)
     np.random.seed(config.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(config.seed)
     
-    # 创建数据集
     train_dataset = TextDataset(f'{config.data_dir}/train.txt', config.seq_length)
     val_dataset = TextDataset(f'{config.data_dir}/val.txt', config.seq_length)
     
@@ -264,7 +256,6 @@ def main():
         num_workers=config.num_workers
     )
     
-    # 初始化模型
     if config.model_type == 'lm':
         model = TransformerLM(
             vocab_size=train_dataset.vocab_size,
@@ -273,7 +264,10 @@ def main():
             d_ff=config.d_ff,
             num_layers=config.num_layers,
             max_seq_length=config.seq_length,
-            dropout=config.dropout
+            dropout=config.dropout,
+            use_positional_encoding=config.use_positional_encoding,
+            use_residual=config.use_residual,
+            use_layer_norm=config.use_layer_norm
         )
     else:
         model = Transformer(
@@ -284,12 +278,14 @@ def main():
             d_ff=config.d_ff,
             num_layers=config.num_layers,
             max_seq_length=config.seq_length,
-            dropout=config.dropout
+            dropout=config.dropout,
+            use_positional_encoding=config.use_positional_encoding,
+            use_residual=config.use_residual,
+            use_layer_norm=config.use_layer_norm
         )
     
     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
     
-    # 训练
     trainer = Trainer(model, train_loader, val_loader, config)
     trainer.train()
 
