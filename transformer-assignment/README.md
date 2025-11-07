@@ -40,7 +40,7 @@ pip install -r requirements.txt
 # 设置随机种子确保可复现性
 python src/train.py --config configs/base.yaml --seed 42
 
-## 模型特性
+## 模特特性
 ✅ Multi-Head Self-Attention
 
 ✅ Position-wise Feed-Forward Networks
