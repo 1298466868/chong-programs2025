@@ -36,11 +36,11 @@ chmod +x scripts/run.sh
 # 方式2: 手动运行
 pip install -r requirements.txt
 
-###复现实验
+### 复现实验
 # 设置随机种子确保可复现性
 python src/train.py --config configs/base.yaml --seed 42
 
-##模型特性
+## 模型特性
 ✅ Multi-Head Self-Attention
 
 ✅ Position-wise Feed-Forward Networks
@@ -53,7 +53,7 @@ python src/train.py --config configs/base.yaml --seed 42
 
 ✅ 训练稳定性技巧(学习率调度、梯度裁剪)
 
-##实验结果
+## 实验结果
 训练完成后，在results/目录下查看:
 
 训练/验证损失曲线
@@ -62,7 +62,7 @@ python src/train.py --config configs/base.yaml --seed 42
 
 生成文本示例
 
-##扩展功能
+## 扩展功能
 相对位置编码
 
 稀疏注意力
