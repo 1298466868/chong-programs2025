@@ -1,4 +1,3 @@
-# src/data_utils.py
 import torch
 from torch.utils.data import Dataset
 import numpy as np
@@ -10,13 +9,11 @@ class TextDataset(Dataset):
         with open(file_path, 'r', encoding='utf-8') as f:
             text = f.read()
         
-        # Create character-level vocabulary
         self.chars = sorted(list(set(text)))
         self.vocab_size = len(self.chars)
-        self.char_to_idx = {ch: i+1 for i, ch in enumerate(self.chars)}  # 0 for padding
+        self.char_to_idx = {ch: i+1 for i, ch in enumerate(self.chars)}
         self.idx_to_char = {i+1: ch for i, ch in enumerate(self.chars)}
         
-        # Convert text to indices
         self.data = [self.char_to_idx[ch] for ch in text]
         
     def __len__(self):
@@ -29,10 +26,8 @@ class TextDataset(Dataset):
         return torch.tensor(x), torch.tensor(y)
 
 def create_masks(src, tgt, pad_idx=0):
-    # Source padding mask
     src_mask = (src != pad_idx).unsqueeze(1).unsqueeze(2)
     
-    # Target padding mask and future mask
     tgt_pad_mask = (tgt != pad_idx).unsqueeze(1).unsqueeze(2)
     tgt_len = tgt.size(1)
     tgt_sub_mask = torch.tril(torch.ones((tgt_len, tgt_len))).bool()
