@@ -1,1 +1,14 @@
 
+# configs/base.yaml
+model_type: "lm"  # "lm" for language model, "transformer" for encoder-decoder
+d_model: 128
+num_heads: 4
+d_ff: 512
+num_layers: 2
+seq_length: 128
+batch_size: 32
+learning_rate: 0.0003
+weight_decay: 0.01
+epochs: 50
+dropout: 0.1
+seed: 42
