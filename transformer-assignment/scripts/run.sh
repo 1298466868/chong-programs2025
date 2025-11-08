@@ -87,6 +87,6 @@ fi
 
 # 开始训练
 echo "开始训练..."
-python src/train.py $CONFIG_ARG --seed 42 --batch_size 64 --seq_length 64 --epochs 10
+python src/train.py $CONFIG_ARG --seed 42 --batch_size 256 --seq_length 256 --epochs 10
 
 echo "训练完成! 查看 results/ 目录获取结果"
