@@ -211,27 +211,27 @@ class Trainer:
         self.generate_sample_text()
     
     def save_checkpoint(self, epoch, best=False):
-    checkpoint = {
-        'epoch': epoch,
-        'model_state_dict': self.model.state_dict(),
-        'optimizer_state_dict': self.optimizer.state_dict(),
-        'scheduler_state_dict': self.scheduler.state_dict() if self.scheduler else None,
-        'train_losses': self.train_losses,
-        'val_losses': self.val_losses,
-        'perplexities': self.perplexities,
-        'config': self.config.__dict__
-    }
-    
-    os.makedirs(self.config.save_dir, exist_ok=True)
-    
-    # 支持best参数
-    if best:
-        filename = f'{self.config.save_dir}/model_best.pt'
-    else:
-        filename = f'{self.config.save_dir}/model_epoch_{epoch+1}.pt'
-    
-    torch.save(checkpoint, filename)
-    print(f"✅ Checkpoint saved: {filename}")在哪
+        checkpoint = {
+            'epoch': epoch,
+            'model_state_dict': self.model.state_dict(),
+            'optimizer_state_dict': self.optimizer.state_dict(),
+            'scheduler_state_dict': self.scheduler.state_dict() if self.scheduler else None,
+            'train_losses': self.train_losses,
+            'val_losses': self.val_losses,
+            'perplexities': self.perplexities,
+            'config': self.config.__dict__
+        }
+        
+        os.makedirs(self.config.save_dir, exist_ok=True)
+        
+        # 支持best参数
+        if best:
+            filename = f'{self.config.save_dir}/model_best.pt'
+        else:
+            filename = f'{self.config.save_dir}/model_epoch_{epoch+1}.pt'
+        
+        torch.save(checkpoint, filename)
+        print(f"✅ Checkpoint saved: {filename}")
     
     def plot_training_curves(self):
         os.makedirs(self.config.results_dir, exist_ok=True)
