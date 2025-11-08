@@ -11,24 +11,15 @@ from model import TransformerLM, Transformer
 from data_utils import TextDataset
 from config import Config
 
-# ===== CUDA彻底修复方案 =====
+# ===== 简化兼容性修复 =====
 import os
-# 完全禁用所有CUDA优化和图形功能
 os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
-os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["TORCH_USE_CUDA_DSA"] = "1"
 
-# 禁用所有可能的CUDA图和相关优化
-torch.backends.cuda.enable_flash_sdp(False)
-torch.backends.cuda.enable_mem_efficient_sdp(False)
-torch.backends.cuda.enable_math_sdp(True)
-
+# 只设置确定可用的选项
 torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
-torch.backends.cuda.matmul.allow_tf32 = False
-torch.backends.cudnn.allow_tf32 = False
 
-print("✅ 已应用CUDA彻底修复")
+print("✅ 已应用兼容性修复")
 # ===== 修复结束 =====
 
 class Trainer:
