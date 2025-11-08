@@ -24,7 +24,63 @@ print("✅ 已应用兼容性修复")
 
 class Trainer:
     def __init__(self, model, train_loader, val_loader, config):
-        # ... 其他初始化代码 ...
+        self.model = model
+        self.train_loader = train_loader
+        self.val_loader = val_loader
+        self.config = config
+        
+        # 检查设备可用性
+        if config.device == 'cuda' and not torch.cuda.is_available():
+            self.device = 'cpu'
+            print("⚠️ CUDA不可用，回退到CPU")
+        else:
+            self.device = config.device
+        
+        self.optimizer = optim.AdamW(
+            model.parameters(), 
+            lr=config.learning_rate,
+            weight_decay=config.weight_decay
+        )
+        
+        # 修复调度器逻辑
+        if hasattr(config, 'warmup_steps') and config.warmup_steps > 0:
+            self.scheduler = self.get_cosine_schedule_with_warmup()
+            self.scheduler_type = 'step'
+        else:
+            self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
+                self.optimizer, 
+                T_max=config.epochs
+            )
+            self.scheduler_type = 'epoch'
+        
+        self.criterion = nn.CrossEntropyLoss(ignore_index=0)
+        self.model.to(self.device)
+        
+        # 预计算掩码以提高效率
+        self._cached_masks = {}
+        
+        self.train_losses = []
+        self.val_losses = []
+        self.perplexities = []
+        self.learning_rates = []
+        
+    def get_cosine_schedule_with_warmup(self):
+        def lr_lambda(current_step):
+            if current_step < self.config.warmup_steps:
+                return float(current_step) / float(max(1, self.config.warmup_steps))
+            progress = float(current_step - self.config.warmup_steps) / float(
+                max(1, self.config.total_training_steps - self.config.warmup_steps)
+            )
+            return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
+        
+        return optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda)
+    
+    def get_mask(self, seq_len):
+        """缓存掩码以提高效率"""
+        if seq_len not in self._cached_masks:
+            mask = torch.triu(torch.ones(seq_len, seq_len) * float('-inf'), diagonal=1)
+            self._cached_masks[seq_len] = mask.to(self.device)
+        return self._cached_masks[seq_len]
         
         # 添加训练步数计数器
         self.global_step = 0
