@@ -117,42 +117,61 @@ class TransformerEncoderLayer(nn.Module):
 class TransformerDecoderLayer(nn.Module):
     def __init__(self, d_model, num_heads, d_ff, dropout=0.1, use_residual=True, use_layer_norm=True):
         super(TransformerDecoderLayer, self).__init__()
-        # ... 初始化代码保持不变
-
+        
+        self.use_residual = use_residual
+        self.use_layer_norm = use_layer_norm
+        
+        # 确保这些属性被正确初始化
+        self.self_attn = MultiHeadAttention(d_model, num_heads, dropout)
+        self.cross_attn = MultiHeadAttention(d_model, num_heads, dropout)
+        self.ffn = PositionwiseFFN(d_model, d_ff, dropout)
+        
+        if self.use_layer_norm:
+            self.norm1 = nn.LayerNorm(d_model)
+            self.norm2 = nn.LayerNorm(d_model)
+            self.norm3 = nn.LayerNorm(d_model)
+        else:
+            # 确保即使不使用layer norm，这些属性也存在
+            self.norm1 = nn.Identity()
+            self.norm2 = nn.Identity()
+            self.norm3 = nn.Identity()
+            
+        self.dropout = nn.Dropout(dropout)
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+        self.dropout3 = nn.Dropout(dropout)
+        
     def forward(self, x, encoder_output, src_mask=None, tgt_mask=None):
         # Self-attention
         self_attn_output, self_attn_weights = self.self_attn(x, x, x, tgt_mask)
         
         if self.use_residual:
-            x = x + self.dropout(self_attn_output)
+            x = x + self.dropout1(self_attn_output)
         else:
-            x = self.dropout(self_attn_output)
+            x = self.dropout1(self_attn_output)
             
-        if self.use_layer_norm:
-            x = self.norm1(x)
+        x = self.norm1(x)
         
         # Cross-attention - 添加空值检查
         cross_attn_output, cross_attn_weights = None, None
         if encoder_output is not None:
             cross_attn_output, cross_attn_weights = self.cross_attn(x, encoder_output, encoder_output, src_mask)
             if self.use_residual:
-                x = x + self.dropout(cross_attn_output)
+                x = x + self.dropout2(cross_attn_output)
             else:
-                x = self.dropout(cross_attn_output)
+                x = self.dropout2(cross_attn_output)
                 
-            if self.use_layer_norm:
-                x = self.norm2(x)
+            x = self.norm2(x)
         
         # FFN
         ffn_output = self.ffn(x)
         
         if self.use_residual:
-            x = x + self.dropout(ffn_output)
+            x = x + self.dropout3(ffn_output)
         else:
-            x = self.dropout(ffn_output)
+            x = self.dropout3(ffn_output)
             
-        if self.use_layer_norm:
-            x = self.norm3(x)
+        x = self.norm3(x)
         
         return x, self_attn_weights, cross_attn_weights
 
