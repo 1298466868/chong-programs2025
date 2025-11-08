@@ -11,8 +11,15 @@ class TextDataset(Dataset):
         
         self.chars = sorted(list(set(text)))
         self.vocab_size = len(self.chars)
-        self.char_to_idx = {ch: i+1 for i, ch in enumerate(self.chars)}
-        self.idx_to_char = {i+1: ch for i, ch in enumerate(self.chars)}
+        
+        # 修复：索引从0开始，添加padding字符
+        self.char_to_idx = {ch: i for i, ch in enumerate(self.chars)}
+        self.idx_to_char = {i: ch for i, ch in enumerate(self.chars)}
+        
+        # 添加padding字符
+        self.char_to_idx['<pad>'] = 0
+        self.idx_to_char[0] = '<pad>'
+        self.vocab_size = len(self.chars) + 1  # 包括padding
         
         self.data = [self.char_to_idx[ch] for ch in text]
         
