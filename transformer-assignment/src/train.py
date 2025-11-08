@@ -63,6 +63,8 @@ class Trainer:
         self.val_losses = []
         self.perplexities = []
         self.learning_rates = []
+
+        self.global_step = 0
         
     def get_cosine_schedule_with_warmup(self):
         def lr_lambda(current_step):
