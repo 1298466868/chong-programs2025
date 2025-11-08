@@ -2,25 +2,6 @@
 
 从零实现的Transformer模型，包含完整的训练流程和消融实验。
 
-## 项目结构
-transformer-assignment/
-├── src/ # 源代码
-│ ├── model.py # Transformer模型实现
-│ ├── train.py # 训练脚本
-│ ├── data_utils.py # 数据预处理
-│ └── config.py # 配置管理
-├── configs/ # 配置文件
-│ └── base.yaml # 基础配置
-├── scripts/ # 运行脚本
-│ ├── run.sh # 一键运行
-│ └── run_ablation.py # 消融实验
-├── data/ # 数据集
-├── checkpoints/ # 模型检查点
-├── results/ # 实验结果
-├── requirements.txt # 依赖
-└── README.md # 说明文档
-
-
 ## 快速开始
 
 ### 环境要求
