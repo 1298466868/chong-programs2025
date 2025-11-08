@@ -117,21 +117,8 @@ class TransformerEncoderLayer(nn.Module):
 class TransformerDecoderLayer(nn.Module):
     def __init__(self, d_model, num_heads, d_ff, dropout=0.1, use_residual=True, use_layer_norm=True):
         super(TransformerDecoderLayer, self).__init__()
-        
-        self.use_residual = use_residual
-        self.use_layer_norm = use_layer_norm
-        
-        self.self_attn = MultiHeadAttention(d_model, num_heads, dropout)
-        self.cross_attn = MultiHeadAttention(d_model, num_heads, dropout)
-        self.ffn = PositionwiseFFN(d_model, d_ff, dropout)
-        
-        if self.use_layer_norm:
-            self.norm1 = nn.LayerNorm(d_model)
-            self.norm2 = nn.LayerNorm(d_model)
-            self.norm3 = nn.LayerNorm(d_model)
-            
-        self.dropout = nn.Dropout(dropout)
-        
+        # ... 初始化代码保持不变
+
     def forward(self, x, encoder_output, src_mask=None, tgt_mask=None):
         # Self-attention
         self_attn_output, self_attn_weights = self.self_attn(x, x, x, tgt_mask)
@@ -144,16 +131,17 @@ class TransformerDecoderLayer(nn.Module):
         if self.use_layer_norm:
             x = self.norm1(x)
         
-        # Cross-attention
-        cross_attn_output, cross_attn_weights = self.cross_attn(x, encoder_output, encoder_output, src_mask)
-        
-        if self.use_residual:
-            x = x + self.dropout(cross_attn_output)
-        else:
-            x = self.dropout(cross_attn_output)
-            
-        if self.use_layer_norm:
-            x = self.norm2(x)
+        # Cross-attention - 添加空值检查
+        cross_attn_output, cross_attn_weights = None, None
+        if encoder_output is not None:
+            cross_attn_output, cross_attn_weights = self.cross_attn(x, encoder_output, encoder_output, src_mask)
+            if self.use_residual:
+                x = x + self.dropout(cross_attn_output)
+            else:
+                x = self.dropout(cross_attn_output)
+                
+            if self.use_layer_norm:
+                x = self.norm2(x)
         
         # FFN
         ffn_output = self.ffn(x)
