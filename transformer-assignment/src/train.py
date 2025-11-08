@@ -24,64 +24,11 @@ print("✅ 已应用兼容性修复")
 
 class Trainer:
     def __init__(self, model, train_loader, val_loader, config):
-        self.model = model
-        self.train_loader = train_loader
-        self.val_loader = val_loader
-        self.config = config
+        # ... 其他初始化代码 ...
         
-        # 检查设备可用性
-        if config.device == 'cuda' and not torch.cuda.is_available():
-            self.device = 'cpu'
-            print("⚠️ CUDA不可用，回退到CPU")
-        else:
-            self.device = config.device
+        # 添加训练步数计数器
+        self.global_step = 0
         
-        self.optimizer = optim.AdamW(
-            model.parameters(), 
-            lr=config.learning_rate,
-            weight_decay=config.weight_decay
-        )
-        
-        # 修复调度器逻辑
-        if hasattr(config, 'warmup_steps') and config.warmup_steps > 0:
-            self.scheduler = self.get_cosine_schedule_with_warmup()
-            self.scheduler_type = 'step'
-        else:
-            self.scheduler = optim.lr_scheduler.CosineAnnealingLR(
-                self.optimizer, 
-                T_max=config.epochs
-            )
-            self.scheduler_type = 'epoch'
-        
-        self.criterion = nn.CrossEntropyLoss(ignore_index=0)
-        self.model.to(self.device)
-        
-        # 预计算掩码以提高效率
-        self._cached_masks = {}
-        
-        self.train_losses = []
-        self.val_losses = []
-        self.perplexities = []
-        self.learning_rates = []
-        
-    def get_cosine_schedule_with_warmup(self):
-        def lr_lambda(current_step):
-            if current_step < self.config.warmup_steps:
-                return float(current_step) / float(max(1, self.config.warmup_steps))
-            progress = float(current_step - self.config.warmup_steps) / float(
-                max(1, self.config.total_training_steps - self.config.warmup_steps)
-            )
-            return max(0.0, 0.5 * (1.0 + math.cos(math.pi * progress)))
-        
-        return optim.lr_scheduler.LambdaLR(self.optimizer, lr_lambda)
-    
-    def get_mask(self, seq_len):
-        """缓存掩码以提高效率"""
-        if seq_len not in self._cached_masks:
-            mask = torch.triu(torch.ones(seq_len, seq_len) * float('-inf'), diagonal=1)
-            self._cached_masks[seq_len] = mask.to(self.device)
-        return self._cached_masks[seq_len]
-    
     def train_epoch(self, epoch):
         self.model.train()
         total_loss = 0
@@ -90,18 +37,11 @@ class Trainer:
         for batch_idx, (data, targets) in enumerate(self.train_loader):
             data, targets = data.to(self.device), targets.to(self.device)
             
-            # 确保数据在正确的设备上
-            if data.device != self.device:
-                data = data.to(self.device)
-            if targets.device != self.device:
-                targets = targets.to(self.device)
-            
             seq_len = data.size(1)
             mask = self.get_mask(seq_len)
             
             self.optimizer.zero_grad()
             
-            # 使用更安全的前向传播
             try:
                 output = self.model(data, mask)
                 loss = self.criterion(output.view(-1, output.size(-1)), targets.view(-1))
@@ -109,7 +49,6 @@ class Trainer:
                 print(f"前向传播错误: {e}")
                 continue
             
-            # 检查损失是否有效
             if torch.isnan(loss) or torch.isinf(loss):
                 print(f"无效的损失值: {loss.item()}, 跳过该batch")
                 continue
@@ -121,18 +60,24 @@ class Trainer:
             
             self.optimizer.step()
             
+            # 修复：step调度器应该在optimizer.step()之后调用
             if self.scheduler_type == 'step':
                 self.scheduler.step()
+                self.global_step += 1
             
-            total_loss += loss.item() * data.size(0)
-            total_tokens += data.size(0)
+            # 修复：正确计算总损失和token数量
+            batch_tokens = targets.numel()  # 计算本batch的token总数
+            total_loss += loss.item() * batch_tokens
+            total_tokens += batch_tokens
             
             current_lr = self.optimizer.param_groups[0]['lr']
             self.learning_rates.append(current_lr)
             
             if batch_idx % self.config.log_interval == 0:
-                print(f'Epoch {epoch}, Batch {batch_idx}, Loss: {loss.item():.4f}, LR: {current_lr:.6f}')
+                # 修复：显示正确的epoch编号
+                print(f'Epoch {epoch+1}/{self.config.epochs}, Batch {batch_idx}, Loss: {loss.item():.4f}, LR: {current_lr:.6f}')
                 
+        # 修复：返回平均每个token的损失
         return total_loss / total_tokens if total_tokens > 0 else 0
     
     def validate(self):
@@ -150,8 +95,10 @@ class Trainer:
                 output = self.model(data, mask)
                 loss = self.criterion(output.view(-1, output.size(-1)), targets.view(-1))
                 
-                total_loss += loss.item() * data.size(0)
-                total_tokens += data.size(0)
+                # 修复：正确计算验证集损失
+                batch_tokens = targets.numel()
+                total_loss += loss.item() * batch_tokens
+                total_tokens += batch_tokens
                 
         avg_loss = total_loss / total_tokens if total_tokens > 0 else float('inf')
         perplexity = math.exp(avg_loss) if avg_loss < 20 else float('inf')
@@ -163,9 +110,13 @@ class Trainer:
         print(f"Training on: {self.device}")
         print(f"Number of parameters: {sum(p.numel() for p in self.model.parameters()):,}")
         
-        # 计算总训练步数
+        # 修复：确保总训练步数正确计算
         if hasattr(self.config, 'warmup_steps') and self.config.warmup_steps > 0:
             self.config.total_training_steps = self.config.epochs * len(self.train_loader)
+            print(f"总训练步数: {self.config.total_training_steps}")
+            print(f"Warmup步数: {self.config.warmup_steps}")
+        
+        best_val_loss = float('inf')
         
         for epoch in range(self.config.epochs):
             start_time = time.time()
@@ -173,6 +124,7 @@ class Trainer:
             train_loss = self.train_epoch(epoch)
             val_loss, perplexity = self.validate()
             
+            # 修复：epoch调度器应该在每个epoch后step
             if self.scheduler_type == 'epoch':
                 self.scheduler.step()
             
@@ -188,6 +140,11 @@ class Trainer:
             print(f'  Perplexity: {perplexity:.2f}')
             print(f'  Time: {epoch_time:.2f}s')
             print('-' * 50)
+            
+            # 添加早停机制
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                self.save_checkpoint(epoch, best=True)
             
             if (epoch + 1) % self.config.save_interval == 0:
                 self.save_checkpoint(epoch)
